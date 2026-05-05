@@ -1,0 +1,13 @@
+{
+  "name": "xiaoren-sheji",
+  "version": "2.0.0",
+  "description": "多人像素射击游戏 - 5人对战 + AI补齐",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0"
+  }
+}

@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小人射击 - 多人联机</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+@font-face { font-family: 'Pixel'; src: local('monospace'); }
+body {
+  font-family: 'Pixel', monospace;
+  background: #0a0a14; color: #fff;
+  width: 100vw; height: 100vh; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+}
+canvas { display: none; position: fixed; top: 0; left: 0; image-rendering: pixelated; }
+
+/* ====== 菜单界面 ====== */
+#ui { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; }
+.screen { display: none; flex-direction: column; align-items: center; gap: 14px; background: rgba(10,10,30,0.95); border: 3px solid #3a3a5a; padding: 40px 50px; border-radius: 8px; min-width: 380px; }
+.screen.active { display: flex; }
+
+h1 { font-size: 36px; letter-spacing: 4px; color: #ff6644; text-shadow: 3px 3px 0 #882211; margin-bottom: 8px; }
+h2 { font-size: 22px; color: #ffaa66; }
+p { color: #aaa; font-size: 13px; }
+
+input {
+  width: 100%; padding: 10px 16px; font-size: 16px;
+  background: #1a1a2e; color: #fff; border: 2px solid #4a4a6a;
+  font-family: inherit; border-radius: 4px; outline: none;
+}
+input:focus { border-color: #ff6644; }
+
+button {
+  width: 100%; padding: 12px; font-size: 16px;
+  background: #3a3a5a; color: #fff; border: 2px solid #5a5a7a;
+  font-family: inherit; cursor: pointer; border-radius: 4px;
+  transition: all 0.15s; letter-spacing: 1px;
+}
+button:hover { background: #4a4a7a; border-color: #ff6644; }
+button:active { transform: scale(0.97); }
+button.primary { background: #cc4422; border-color: #ff6644; }
+button.primary:hover { background: #dd5533; }
+button.danger { background: #442222; border-color: #884444; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#room-list { width: 100%; max-height: 260px; overflow-y: auto; }
+.room-entry {
+  width: 100%; padding: 10px 14px; background: #1a1a2e; border: 1px solid #3a3a5a;
+  margin-bottom: 6px; cursor: pointer; border-radius: 4px; display: flex;
+  justify-content: space-between; align-items: center;
+}
+.room-entry:hover { border-color: #ff6644; background: #222240; }
+.room-entry .rn { font-size: 15px; }
+.room-entry .rc { font-size: 12px; color: #888; }
+
+.lobby-player {
+  width: 100%; padding: 8px 14px; background: #1a1a2e; border: 1px solid #3a3a5a;
+  border-radius: 4px; display: flex; justify-content: space-between; align-items: center;
+  font-size: 14px;
+}
+.lobby-player .host-badge { color: #ffaa00; font-size: 11px; }
+
+#countdown-overlay {
+  position: fixed; inset: 0; z-index: 30; display: none;
+  align-items: center; justify-content: center; background: rgba(0,0,0,0.6);
+  font-size: 80px; color: #ff6644; text-shadow: 4px 4px 0 #882211;
+}
+#countdown-overlay.active { display: flex; }
+
+#status { position: fixed; top: 10px; left: 10px; z-index: 15; font-size: 11px; color: #5a5; }
+
+/* ====== 游戏内 HUD 覆盖层 ====== */
+#hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: none; }
+#hud.active { display: block; }
+.hud-ammo { position: absolute; left: 20px; bottom: 80px; font-size: 16px; line-height: 1.6; }
+.hud-hp { position: absolute; right: 20px; bottom: 80px; font-size: 16px; text-align: right; }
+.hud-alive { position: absolute; right: 20px; top: 18px; font-size: 14px; }
+.hud-kills { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); text-align: center; font-size: 13px; line-height: 1.7; }
+.hud-help { position: absolute; left: 20px; bottom: 14px; font-size: 11px; color: rgba(255,255,255,0.4); }
+.hud-minimap { position: absolute; right: 14px; top: 50px; }
+
+#game-over-overlay {
+  position: fixed; inset: 0; z-index: 25; display: none;
+  align-items: center; justify-content: center; background: rgba(0,0,0,0.75);
+  flex-direction: column; gap: 16px;
+}
+#game-over-overlay.active { display: flex; }
+#game-over-overlay .result { font-size: 32px; }
+#game-over-overlay button { width: auto; padding: 14px 40px; }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="ui">
+  <!-- 主菜单 -->
+  <div id="menu-screen" class="screen active">
+    <h1>小人射击</h1>
+    <p style="font-size:12px;color:#666;">多人联机 · 5人对战 · AI补齐</p>
+    <input id="name-inp" placeholder="输入昵称" maxlength="12" value="枪手">
+    <button id="btn-quick" class="primary">⚡ 快速匹配</button>
+    <button id="btn-create">🏠 创建房间</button>
+    <button id="btn-join">📋 加入房间</button>
+  </div>
+
+  <!-- 创建房间 -->
+  <div id="create-screen" class="screen">
+    <h2>创建房间</h2>
+    <input id="room-name-inp" placeholder="房间名称" maxlength="20">
+    <button id="btn-create-ok" class="primary">创建</button>
+    <button id="btn-create-back">返回</button>
+  </div>
+
+  <!-- 加入房间 -->
+  <div id="join-screen" class="screen">
+    <h2>可选房间</h2>
+    <div id="room-list">加载中...</div>
+    <button id="btn-refresh">刷新列表</button>
+    <button id="btn-join-back">返回</button>
+  </div>
+
+  <!-- 房间大厅 -->
+  <div id="lobby-screen" class="screen">
+    <h2 id="lobby-name"></h2>
+    <p id="lobby-id" style="font-size:12px;color:#888;"></p>
+    <div id="lobby-players"></div>
+    <button id="btn-start" class="primary" style="display:none;">开始游戏</button>
+    <button id="btn-leave" class="danger">离开房间</button>
+  </div>
+</div>
+
+<div id="hud">
+  <div class="hud-ammo" id="hud-ammo"></div>
+  <div class="hud-hp" id="hud-hp"></div>
+  <div class="hud-alive" id="hud-alive"></div>
+  <div class="hud-kills" id="hud-kills"></div>
+  <div class="hud-help">WASD移动 | 鼠标瞄准 | 按住左键射击(自动锁定) | R换弹</div>
+  <canvas class="hud-minimap" id="minimap" width="150" height="112"></canvas>
+</div>
+
+<div id="countdown-overlay"></div>
+
+<div id="game-over-overlay">
+  <div class="result" id="go-result"></div>
+  <p id="go-winner" style="font-size:18px;color:#ffaa66;"></p>
+  <button id="btn-return-lobby">返回大厅</button>
+</div>
+
+<div id="status">未连接</div>
+
+<script>
+// ==================== 常量 ====================
+const NET_SEND_INTERVAL = 33; // 30Hz 发送输入
+
+// ==================== 网络客户端 ====================
+class NetClient {
+  constructor() {
+    this.ws = null;
+    this.clientId = null;
+    this.roomId = null;
+    this.yourId = null;
+    this.connected = false;
+    this.callbacks = {};
+  }
+
+  connect(url) {
+    this.ws = new WebSocket(url);
+    this.ws.onopen = () => { this.connected = true; setStatus('已连接'); };
+    this.ws.onclose = () => { this.connected = false; setStatus('断开连接'); };
+    this.ws.onerror = () => {};
+    this.ws.onmessage = (e) => {
+      try { const msg = JSON.parse(e.data); this.dispatch(msg); }
+      catch (err) { console.error('消息解析错误', err); }
+    };
+  }
+
+  on(type, cb) { if (!this.callbacks[type]) this.callbacks[type] = []; this.callbacks[type].push(cb); }
+  dispatch(msg) {
+    const cbs = this.callbacks[msg.type];
+    if (cbs) cbs.forEach(cb => cb(msg));
+    // 通用处理器
+    const all = this.callbacks['*'];
+    if (all) all.forEach(cb => cb(msg));
+  }
+
+  send(msg) {
+    if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(msg));
+  }
+
+  setName(name) { this.send({ type: 'set_name', name }); }
+  createRoom(roomName) { this.send({ type: 'create_room', roomName }); }
+  joinRoom(roomId) { this.send({ type: 'join_room', roomId }); }
+  quickMatch() { this.send({ type: 'quick_match' }); }
+  leaveRoom() { this.send({ type: 'leave_room' }); }
+  startGame() { this.send({ type: 'start_game' }); }
+  getRooms() { this.send({ type: 'get_rooms' }); }
+  sendInput(keys, mouseWorldX, mouseWorldY, shooting, reloading) {
+    this.send({ type: 'input', keys, mouseWorldX, mouseWorldY, shooting, reloading });
+  }
+}
+
+const net = new NetClient();
+
+// ==================== 渲染器 ====================
+class Renderer {
+  constructor(canvas) {
+    this.cvs = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.ctx.imageSmoothingEnabled = false;
+    this.mapData = null; this.tileSize = 40; this.worldW = 1600; this.worldH = 1200;
+    this.currentState = null; this.prevState = null; this.stateTime = 0;
+    this.cam = { x: 0, y: 0 };
+    this.yourId = null;
+  }
+
+  setMap(map, tileSize, worldW, worldH) {
+    this.mapData = map; this.tileSize = tileSize;
+    this.worldW = worldW; this.worldH = worldH;
+  }
+
+  updateState(state) {
+    this.prevState = this.currentState;
+    this.currentState = state;
+    this.stateTime = performance.now();
+  }
+
+  getInterpolated() {
+    const s = this.currentState;
+    if (!s) return null;
+    if (!this.prevState) return s;
+    const elapsed = (performance.now() - this.stateTime) / 1000;
+    const tickLen = 0.05; // 50ms
+    const t = Math.min(elapsed / tickLen, 1.0);
+    const players = s.players.map(sp => {
+      const pp = this.prevState.players.find(p => p.id === sp.id);
+      if (!pp) return sp;
+      return {
+        ...sp,
+        x: pp.x + (sp.x - pp.x) * t,
+        y: pp.y + (sp.y - pp.y) * t,
+        angle: sp.angle,
+      };
+    });
+    // 子弹插值
+    const bullets = (s.bullets || []).map(sb => {
+      const pb = (this.prevState.bullets || []).find(b => b.x === sb.x && b.y === sb.y);
+      return pb ? { ...sb, x: pb.x + (sb.x - pb.x) * t, y: pb.y + (sb.y - pb.y) * t } : sb;
+    });
+    return { ...s, players, bullets };
+  }
+
+  resize() {
+    this.cvs.width = window.innerWidth;
+    this.cvs.height = window.innerHeight;
+  }
+
+  render() {
+    const state = this.getInterpolated();
+    if (!state || !this.mapData) return;
+    const ctx = this.ctx;
+    const cam = this.cam;
+
+    // 背景
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, this.cvs.width, this.cvs.height);
+
+    // 绘制地图tile
+    const stx = Math.max(0, Math.floor(cam.x / this.tileSize) - 1);
+    const sty = Math.max(0, Math.floor(cam.y / this.tileSize) - 1);
+    const etx = Math.min(this.mapData[0].length, Math.ceil((cam.x + this.cvs.width) / this.tileSize) + 1);
+    const ety = Math.min(this.mapData.length, Math.ceil((cam.y + this.cvs.height) / this.tileSize) + 1);
+
+    for (let ty = sty; ty < ety; ty++) {
+      for (let tx = stx; tx < etx; tx++) {
+        const sx = tx * this.tileSize - cam.x, sy = ty * this.tileSize - cam.y;
+        if (this.mapData[ty][tx] === 1) {
+          ctx.fillStyle = '#4a4a5a';
+          ctx.fillRect(sx, sy, this.tileSize, this.tileSize);
+          ctx.fillStyle = '#5a5a6a';
+          ctx.fillRect(sx + 1, sy + 1, this.tileSize - 2, this.tileSize - 2);
+          ctx.fillStyle = '#3a3a4a';
+          ctx.fillRect(sx, sy + this.tileSize / 2 - 1, this.tileSize, 2);
+          ctx.fillRect(sx + this.tileSize / 2 - 1, sy, 2, this.tileSize / 2);
+        } else {
+          ctx.fillStyle = ((tx + ty) % 2 === 0) ? '#1e1e30' : '#222238';
+          ctx.fillRect(sx, sy, this.tileSize, this.tileSize);
+        }
+      }
+    }
+
+    // 绘制弹药点
+    const pickups = state.pickups || [];
+    for (const pk of pickups) {
+      if (!pk.active) continue;
+      const sx = pk.x - cam.x, sy = pk.y - cam.y;
+      const bob = Math.sin(performance.now() / 300) * 3;
+      ctx.fillStyle = 'rgba(0,255,100,0.25)';
+      ctx.beginPath(); ctx.arc(sx, sy + bob, 14, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(sx - 7, sy - 5 + bob, 14, 10);
+      ctx.fillStyle = '#DAA520';
+      ctx.fillRect(sx - 5, sy - 7 + bob, 3, 3);
+      ctx.fillRect(sx + 2, sy - 7 + bob, 3, 3);
+      ctx.fillRect(sx - 1, sy - 10 + bob, 3, 3);
+      ctx.fillStyle = '#0f0';
+      ctx.beginPath(); ctx.arc(sx, sy - 9 + bob, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 非活跃弹药点标记
+    for (let ty = sty; ty < ety; ty++) {
+      for (let tx = stx; tx < etx; tx++) {
+        if (this.mapData[ty][tx] === 2) {
+          const cx = tx * this.tileSize + this.tileSize / 2;
+          const cy = ty * this.tileSize + this.tileSize / 2;
+          const active = pickups.some(pk => pk.active && Math.abs(pk.x - cx) < 2 && Math.abs(pk.y - cy) < 2);
+          if (!active) {
+            const sx = cx - cam.x, sy = cy - cam.y;
+            ctx.fillStyle = 'rgba(0,255,100,0.06)';
+            ctx.beginPath(); ctx.arc(sx, sy, 10, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+      }
+    }
+
+    // 绘制子弹
+    for (const b of (state.bullets || [])) {
+      const sx = b.x - cam.x, sy = b.y - cam.y;
+      ctx.fillStyle = '#ffe066';
+      ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(sx, sy, 1.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 绘制玩家
+    for (const p of state.players) {
+      if (!p.alive) continue;
+      const sx = p.x - cam.x, sy = p.y - cam.y;
+      if (sx < -50 || sx > this.cvs.width + 50 || sy < -50 || sy > this.cvs.height + 50) continue;
+
+      ctx.save(); ctx.translate(sx, sy);
+      const s = 16;
+      const isSelf = p.id === this.yourId;
+
+      // 自动瞄准锁定指示器
+      if (isSelf && this.autoAimTarget) {
+        ctx.strokeStyle = 'rgba(255,100,50,0.5)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(this.autoAimTarget.x - cam.x - sx, this.autoAimTarget.y - cam.y - sy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 身体
+      ctx.fillStyle = p.alive ? p.color : '#555';
+      ctx.fillRect(-s * 0.5, -s * 0.3, s, s * 0.7);
+      // 头
+      ctx.fillRect(-s * 0.35, -s * 0.8, s * 0.7, s * 0.55);
+      // 眼睛
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-s * 0.15, -s * 0.65, s * 0.2, s * 0.2);
+      ctx.fillRect(s * 0.15, -s * 0.65, s * 0.2, s * 0.2);
+      ctx.fillStyle = '#111';
+      const ex = Math.cos(p.angle) * 2, ey = Math.sin(p.angle) * 2;
+      ctx.fillRect(-s * 0.15 + ex, -s * 0.65 + ey, s * 0.12, s * 0.12);
+      ctx.fillRect(s * 0.15 + ex, -s * 0.65 + ey, s * 0.12, s * 0.12);
+      // 胳膊
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-s * 0.7, -s * 0.2, s * 0.2, s * 0.15);
+      ctx.fillRect(s * 0.5, -s * 0.2, s * 0.2, s * 0.15);
+      // 枪管
+      ctx.fillStyle = '#444';
+      const gx = Math.cos(p.angle) * s * 0.4, gy = Math.sin(p.angle) * s * 0.4;
+      ctx.fillRect(gx + s * 0.3, gy - 2, s * 0.5, 4);
+
+      // 换弹进度
+      if (p.reloading && p.alive) {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(-10, s * 0.4, 20, 3);
+        ctx.fillStyle = '#f1c40f';
+        ctx.fillRect(-10, s * 0.4, 20 * 0.5, 3); // approximate
+      }
+
+      ctx.restore();
+
+      // HP条 (跟随玩家)
+      const barW = 24, barH = 4, barY = sy - s - 10;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(sx - barW / 2, barY, barW, barH);
+      const hpPct = p.hp / 5;
+      ctx.fillStyle = hpPct > 0.6 ? '#2ecc71' : hpPct > 0.3 ? '#f39c12' : '#e74c3c';
+      ctx.fillRect(sx - barW / 2, barY, barW * hpPct, barH);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(p.name, sx, barY - 3);
+      ctx.fillText(p.hp + '/5', sx, barY + barH + 9);
+    }
+
+    // 准星
+    const selfP = state.players.find(p => p.id === this.yourId);
+    if (selfP && selfP.alive) {
+      const csx = selfP.x - cam.x, csy = selfP.y - cam.y;
+      const tx = csx + Math.cos(selfP.angle) * 30;
+      const ty = csy + Math.sin(selfP.angle) * 30;
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tx - 6, ty); ctx.lineTo(tx - 2, ty); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tx + 2, ty); ctx.lineTo(tx + 6, ty); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tx, ty - 6); ctx.lineTo(tx, ty - 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tx, ty + 2); ctx.lineTo(tx, ty + 6); ctx.stroke();
+    }
+  }
+
+  updateCamera() {
+    if (!this.currentState) return;
+    const you = this.currentState.players.find(p => p.id === this.yourId);
+    if (you && you.alive) {
+      const targetX = you.x - this.cvs.width / 2;
+      const targetY = you.y - this.cvs.height / 2;
+      this.cam.x += (targetX - this.cam.x) * 0.12;
+      this.cam.y += (targetY - this.cam.y) * 0.12;
+    }
+    this.cam.x = Math.max(0, Math.min(this.worldW - this.cvs.width, this.cam.x));
+    this.cam.y = Math.max(0, Math.min(this.worldH - this.cvs.height, this.cam.y));
+  }
+  isWall(wx, wy) {
+    if (!this.mapData) return true;
+    const tx = Math.floor(wx / this.tileSize), ty = Math.floor(wy / this.tileSize);
+    if (tx < 0 || tx >= this.mapData[0].length || ty < 0 || ty >= this.mapData.length) return true;
+    return this.mapData[ty][tx] === 1;
+  }
+  hasLineOfSight(x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const steps = Math.max(Math.abs(dx), Math.abs(dy)) / (this.tileSize / 2);
+    const sx = dx / steps, sy = dy / steps;
+    let cx = x1, cy = y1;
+    for (let i = 0; i < steps; i++) { cx += sx; cy += sy; if (this.isWall(cx, cy)) return false; }
+    return true;
+  }
+  setAutoAimTarget(t) { this.autoAimTarget = t; }
+}
+
+const renderer = new Renderer(document.getElementById('game'));
+
+// ==================== 游戏状态管理 ====================
+let myName = '枪手';
+let yourId = null;
+let roomId = null;
+let isHost = false;
+let gameActive = false;
+let gameStarted = false;
+let inputSendTimer = 0;
+
+// ==================== UI 元素 ====================
+const $menu = document.getElementById('menu-screen');
+const $create = document.getElementById('create-screen');
+const $join = document.getElementById('join-screen');
+const $lobby = document.getElementById('lobby-screen');
+const $hud = document.getElementById('hud');
+const $canvas = document.getElementById('game');
+const $countdown = document.getElementById('countdown-overlay');
+const $gameOver = document.getElementById('game-over-overlay');
+const $status = document.getElementById('status');
+const $minimap = document.getElementById('minimap');
+const minimapCtx = $minimap.getContext('2d');
+
+function setStatus(s) { $status.textContent = '● ' + s; }
+function showScreen(screen) {
+  [$menu, $create, $join, $lobby].forEach(s => s.classList.remove('active'));
+  if (screen) screen.classList.add('active');
+}
+function showGameUI() { $hud.classList.add('active'); $canvas.style.display = 'block'; $lobby.classList.remove('active'); }
+function hideGameUI() { $hud.classList.remove('active'); $canvas.style.display = 'none'; $gameOver.classList.remove('active'); }
+
+// ==================== 输入处理 ====================
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key.toLowerCase() === 'r' && gameActive) net.sendInput(keys, 0, 0, mouseDown, true);
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+let mouseX = 0, mouseY = 0, mouseDown = false;
+window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+window.addEventListener('mousedown', e => { if (e.button === 0) mouseDown = true; });
+window.addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+// ==================== 网络消息处理 ====================
+net.on('connected', msg => {
+  setStatus('已连接 - 设置昵称...');
+  net.setName(myName);
+});
+
+net.on('name_set', msg => {
+  myName = msg.name;
+  setStatus('就绪 - ' + myName);
+});
+
+net.on('room_joined', msg => {
+  roomId = msg.room.id;
+  yourId = msg.yourId;
+  renderer.yourId = yourId;
+  isHost = msg.room.hostId === yourId;
+  updateLobbyUI(msg.room);
+  showScreen($lobby);
+  setStatus('在房间: ' + msg.room.name);
+});
+
+net.on('room_update', msg => {
+  isHost = msg.room.hostId === yourId;
+  updateLobbyUI(msg.room);
+});
+
+net.on('left_room', () => {
+  roomId = null; yourId = null; isHost = false;
+  hideGameUI(); gameActive = false; gameStarted = false;
+  showScreen($menu);
+  setStatus('已退出房间');
+});
+
+net.on('countdown', msg => {
+  $countdown.classList.add('active');
+  $countdown.textContent = msg.value;
+  if (msg.value <= 0) $countdown.classList.remove('active');
+});
+
+net.on('game_start', msg => {
+  $countdown.classList.remove('active');
+  gameActive = true; gameStarted = true;
+  yourId = msg.yourId;
+  renderer.yourId = yourId;
+  renderer.setMap(msg.map, msg.tileSize, msg.worldW, msg.worldH);
+  showGameUI();
+  $lobby.classList.remove('active');
+  document.getElementById('ui').style.display = 'none';
+  setStatus('游戏中...');
+});
+
+net.on('game_state', msg => {
+  renderer.updateState(msg);
+  updateHUD(msg);
+  updateMinimap(msg);
+  // 计算自动瞄准目标 (仅用于显示锁定线, 含视线检测)
+  const you = msg.players.find(p => p.id === yourId);
+  if (you && you.alive) {
+    let best = null, bestD = 420;
+    for (const p of msg.players) {
+      if (!p.alive || p.id === yourId) continue;
+      const d = Math.hypot(you.x - p.x, you.y - p.y);
+      if (d < bestD && renderer.hasLineOfSight(you.x, you.y, p.x, p.y)) { best = p; bestD = d; }
+    }
+    renderer.setAutoAimTarget(best);
+  } else {
+    renderer.setAutoAimTarget(null);
+  }
+});
+
+net.on('game_over', msg => {
+  gameActive = false;
+  const youWin = msg.winnerId === yourId;
+  document.getElementById('go-result').textContent = youWin ? '🏆 胜利!' : '💀 你被消灭了';
+  document.getElementById('go-result').style.color = youWin ? '#2ecc71' : '#e74c3c';
+  document.getElementById('go-winner').textContent = '胜者: ' + msg.winner;
+  $gameOver.classList.add('active');
+  setStatus('游戏结束');
+});
+
+net.on('return_to_lobby', () => {
+  gameStarted = false; gameActive = false;
+  hideGameUI(); $gameOver.classList.remove('active');
+  document.getElementById('ui').style.display = 'flex';
+  showScreen($lobby);
+  net.getRooms();
+  setStatus('返回大厅');
+});
+
+net.on('room_list', msg => {
+  const list = document.getElementById('room-list');
+  if (!msg.rooms || msg.rooms.length === 0) {
+    list.innerHTML = '<p style="color:#666;text-align:center;">暂无可用房间</p>';
+    return;
+  }
+  list.innerHTML = msg.rooms.map(r => `
+    <div class="room-entry" data-id="${r.id}">
+      <span class="rn">${r.name}</span>
+      <span class="rc">${r.playerCount}/${r.maxPlayers}人</span>
+    </div>
+  `).join('');
+  list.querySelectorAll('.room-entry').forEach(el => {
+    el.addEventListener('click', () => {
+      net.joinRoom(el.dataset.id);
+    });
+  });
+});
+
+net.on('error', msg => {
+  alert('错误: ' + msg.message);
+});
+
+// ==================== UI 交互 ====================
+document.getElementById('btn-quick').addEventListener('click', () => {
+  myName = document.getElementById('name-inp').value.trim() || '枪手';
+  net.setName(myName);
+  net.quickMatch();
+});
+
+document.getElementById('btn-create').addEventListener('click', () => {
+  showScreen($create);
+});
+
+document.getElementById('btn-create-back').addEventListener('click', () => {
+  showScreen($menu);
+});
+
+document.getElementById('btn-create-ok').addEventListener('click', () => {
+  myName = document.getElementById('name-inp').value.trim() || '枪手';
+  const roomName = document.getElementById('room-name-inp').value.trim() || (myName + '的房间');
+  net.setName(myName);
+  net.createRoom(roomName);
+});
+
+document.getElementById('btn-join').addEventListener('click', () => {
+  net.getRooms();
+  showScreen($join);
+});
+
+document.getElementById('btn-join-back').addEventListener('click', () => {
+  showScreen($menu);
+});
+
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  net.getRooms();
+});
+
+document.getElementById('btn-start').addEventListener('click', () => {
+  net.startGame();
+});
+
+document.getElementById('btn-leave').addEventListener('click', () => {
+  net.leaveRoom();
+  hideGameUI(); gameActive = false; gameStarted = false;
+  document.getElementById('ui').style.display = 'flex';
+  showScreen($menu);
+});
+
+document.getElementById('btn-return-lobby').addEventListener('click', () => {
+  $gameOver.classList.remove('active');
+  // 等待服务器返回大厅
+});
+
+// ==================== 大厅UI更新 ====================
+function updateLobbyUI(room) {
+  document.getElementById('lobby-name').textContent = room.name;
+  document.getElementById('lobby-id').textContent = '房间号: ' + room.id + ' | ' + room.players.length + '/' + room.maxPlayers + '人';
+  const playersDiv = document.getElementById('lobby-players');
+  playersDiv.innerHTML = room.players.map(p => `
+    <div class="lobby-player">
+      <span>${p.name} ${p.isHost ? '<span class="host-badge">[房主]</span>' : ''}</span>
+    </div>
+  `).join('');
+  // 显示空位
+  for (let i = room.players.length; i < room.maxPlayers; i++) {
+    playersDiv.innerHTML += `<div class="lobby-player"><span style="color:#555;">等待玩家加入...</span></div>`;
+  }
+  const btnStart = document.getElementById('btn-start');
+  if (isHost) {
+    btnStart.style.display = 'block';
+    btnStart.disabled = room.players.length < 1;
+  } else {
+    btnStart.style.display = 'none';
+  }
+  document.getElementById('lobby-id').textContent =
+    '房间号: ' + room.id + ' | ' + room.players.length + '/' + room.maxPlayers + '人' +
+    (room.players.length < room.maxPlayers ? ' (不足时将AI补齐)' : '');
+}
+
+// ==================== HUD更新 ====================
+function updateHUD(state) {
+  const you = state.players.find(p => p.id === yourId);
+  if (!you) return;
+
+  const magColor = you.mag === 0 ? '#e74c3c' : you.reloading ? '#f39c12' : '#fff';
+  document.getElementById('hud-ammo').innerHTML = `
+    <span style="color:${magColor}">弹夹: ${you.mag} / 5</span><br>
+    <span style="color:#ccc">备弹: ${you.reserve} / 10</span>
+    ${you.reloading ? '<br><span style="color:#f39c12">换弹中...</span>' : ''}
+    ${you.mag === 0 && you.reserve === 0 ? '<br><span style="color:#e74c3c">弹药耗尽!</span>' : ''}
+  `;
+
+  const hpPct = you.hp / 5;
+  const hpColor = hpPct > 0.6 ? '#2ecc71' : hpPct > 0.3 ? '#f39c12' : '#e74c3c';
+  document.getElementById('hud-hp').innerHTML = `
+    <span>HP</span><br>
+    <span style="color:${hpColor};font-size:24px;">${'█'.repeat(you.hp)}${'░'.repeat(5 - you.hp)}</span>
+    <span style="color:${hpColor}"> ${you.hp}/5</span>
+  `;
+
+  document.getElementById('hud-alive').textContent = '存活: ' + state.aliveCount + ' / ' + (state.players.length);
+
+  const feed = state.killFeed || [];
+  document.getElementById('hud-kills').innerHTML = feed.map(kf =>
+    `<span style="color:rgba(255,255,255,${Math.min(1, kf.time)})">${kf.killer} 击杀 ${kf.victim}</span>`
+  ).join('<br>');
+}
+
+// ==================== 小地图 ====================
+function updateMinimap(state) {
+  const ctx = minimapCtx;
+  const w = 150, h = 112;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, w, h);
+
+  const sx = w / renderer.worldW, sy = h / renderer.worldH;
+  if (!renderer.mapData) return;
+
+  // 墙壁
+  ctx.fillStyle = '#555';
+  for (let ty = 0; ty < renderer.mapData.length; ty++) {
+    for (let tx = 0; tx < renderer.mapData[0].length; tx++) {
+      if (renderer.mapData[ty][tx] === 1) {
+        ctx.fillRect(tx * 40 * sx, ty * 40 * sy, 40 * sx, 40 * sy);
+      }
+    }
+  }
+
+  // 弹药点
+  for (const pk of (state.pickups || [])) {
+    if (!pk.active) continue;
+    ctx.fillStyle = '#0f0';
+    ctx.fillRect(pk.x * sx - 1.5, pk.y * sy - 1.5, 3, 3);
+  }
+
+  // 玩家
+  for (const p of state.players) {
+    if (!p.alive) continue;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x * sx - 2, p.y * sy - 2, 4, 4);
+  }
+}
+
+// ==================== 游戏主循环 ====================
+window.addEventListener('resize', () => renderer.resize());
+renderer.resize();
+
+function gameLoop(timestamp) {
+  requestAnimationFrame(gameLoop);
+
+  if (gameActive) {
+    // 发送输入
+    inputSendTimer += (timestamp - (gameLoop._lastTs || timestamp));
+    if (inputSendTimer >= NET_SEND_INTERVAL) {
+      inputSendTimer = 0;
+      const you = renderer.currentState ? renderer.currentState.players.find(p => p.id === yourId) : null;
+      if (you && you.alive) {
+        const cam = renderer.cam;
+        const mwx = mouseX + cam.x;
+        const mwy = mouseY + cam.y;
+        net.sendInput(keys, mwx, mwy, mouseDown, false);
+      }
+    }
+
+    // 更新相机
+    renderer.updateCamera();
+
+    // 渲染
+    renderer.render();
+  }
+
+  gameLoop._lastTs = timestamp;
+}
+
+// ==================== 连接服务器 ====================
+const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = protocol + '//' + location.host;
+net.connect(wsUrl);
+
+// 初始请求房间列表
+setTimeout(() => { if (net.connected) net.getRooms(); }, 500);
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

@@ -657,27 +657,23 @@ document.getElementById('btn-return-lobby').addEventListener('click', () => {
 // ==================== 大厅UI更新 ====================
 function updateLobbyUI(room) {
   document.getElementById('lobby-name').textContent = room.name;
-  document.getElementById('lobby-id').textContent = '房间号: ' + room.id + ' | ' + room.players.length + '/' + room.maxPlayers + '人';
+  const totalPlayers = room.players.length;
+  document.getElementById('lobby-id').textContent = '房间号: ' + room.id + ' | ' + totalPlayers + '/' + room.maxPlayers + '人';
   const playersDiv = document.getElementById('lobby-players');
-  playersDiv.innerHTML = room.players.map(p => `
-    <div class="lobby-player">
-      <span>${p.name} ${p.isHost ? '<span class="host-badge">[房主]</span>' : ''}</span>
-    </div>
-  `).join('');
-  // 显示空位
-  for (let i = room.players.length; i < room.maxPlayers; i++) {
-    playersDiv.innerHTML += `<div class="lobby-player"><span style="color:#555;">等待玩家加入...</span></div>`;
-  }
+  playersDiv.innerHTML = room.players.map(p => {
+    const badge = p.isHost ? '<span class="host-badge">[房主]</span>' : '';
+    const tag = p.isBot ? '<span style="color:#f39c12;font-size:11px;">[人机]</span>' : '';
+    return `<div class="lobby-player">
+      <span>${p.name} ${badge} ${tag}</span>
+    </div>`;
+  }).join('');
   const btnStart = document.getElementById('btn-start');
   if (isHost) {
     btnStart.style.display = 'block';
-    btnStart.disabled = room.players.length < 1;
+    btnStart.disabled = false;
   } else {
     btnStart.style.display = 'none';
   }
-  document.getElementById('lobby-id').textContent =
-    '房间号: ' + room.id + ' | ' + room.players.length + '/' + room.maxPlayers + '人' +
-    (room.players.length < room.maxPlayers ? ' (不足时将AI补齐)' : '');
 }
 
 // ==================== HUD更新 ====================

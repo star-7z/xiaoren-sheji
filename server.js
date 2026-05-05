@@ -245,6 +245,9 @@ class Room {
     this.killFeed = [];
     this.playerInputs = new Map(); // playerId → { keys, mouseX, mouseY, shooting, reloading }
     this.lastInputTime = new Map();
+    this.lobbyBots = 0;         // 大厅中的人机占位数
+    this.autoFillTimer = null;  // 自动填充定时器
+    this.startAutoFill();
   }
 
   addHuman(ws, name) {
@@ -254,6 +257,12 @@ class Room {
     this.humans.set(id, player);
     this.playerInputs.set(id, { keys: {}, mouseX: 0, mouseY: 0, shooting: false, reloading: false });
     this.lastInputTime.set(id, Date.now());
+    // 真人加入时挤掉一个人机占位
+    if (this.lobbyBots > 0 && (this.humans.size + this.lobbyBots) > MAX_PLAYERS) {
+      this.lobbyBots--;
+    }
+    this.restartAutoFill();
+    this.broadcastLobby();
     return player;
   }
 
@@ -265,8 +274,44 @@ class Room {
       const p = this.getStatePlayer(playerId);
       if (p && p.alive) { p.alive = false; this.aliveCount--; this.checkWin(); }
     }
+    if (this.state === 'lobby') {
+      this.restartAutoFill();
+      this.broadcastLobby();
+    }
     if (this.humans.size === 0 && this.state !== 'playing') this.scheduleDestroy();
     return this.humans.size;
+  }
+
+  // 自动填充人机 (每秒一个)
+  startAutoFill() {
+    if (this.autoFillTimer) return;
+    this.autoFillTimer = setInterval(() => {
+      if (this.state !== 'lobby') return;
+      if (this.humans.size + this.lobbyBots >= MAX_PLAYERS) {
+        clearInterval(this.autoFillTimer); this.autoFillTimer = null;
+        return;
+      }
+      this.lobbyBots++;
+      this.broadcastLobby();
+      if (this.humans.size + this.lobbyBots >= MAX_PLAYERS) {
+        clearInterval(this.autoFillTimer); this.autoFillTimer = null;
+      }
+    }, 1000);
+  }
+
+  stopAutoFill() {
+    if (this.autoFillTimer) { clearInterval(this.autoFillTimer); this.autoFillTimer = null; }
+  }
+
+  restartAutoFill() {
+    this.stopAutoFill();
+    if (this.state === 'lobby' && this.humans.size + this.lobbyBots < MAX_PLAYERS) {
+      this.startAutoFill();
+    }
+  }
+
+  broadcastLobby() {
+    this.broadcast({ type: 'room_update', room: this.getLobbyData() });
   }
 
   getStatePlayer(playerId) {
@@ -301,28 +346,28 @@ class Room {
 
   startGame() {
     if (this.state !== 'lobby') return;
-    this.state = 'countdown'; this.countdownValue = 3;
-    this.broadcast({ type: 'countdown', value: this.countdownValue });
-    this.countdownTimer = setInterval(() => {
-      this.countdownValue--;
-      if (this.countdownValue <= 0) { clearInterval(this.countdownTimer); this.countdownTimer = null; this.beginGame(); }
-      else this.broadcast({ type: 'countdown', value: this.countdownValue });
-    }, 1000);
+    this.stopAutoFill();
+    this.beginGame();
   }
 
   beginGame() {
     this.state = 'playing'; this.bullets = []; this.particles = [];
     this.gameTime = 0; this.tickNumber = 0; this.killFeed = [];
+    this.stopAutoFill();
     const spawns = getAmmoSpawns();
     this.pickups = spawns.map(s => ({ x: s.x, y: s.y, active: true, respawnTimer: 0 }));
 
+    // 剩余空位全部用真实AI补齐到5人
     const humanCount = this.humans.size;
+    const botsNeeded = MAX_PLAYERS - humanCount;
     this.bots = [];
-    for (let i = humanCount; i < MAX_PLAYERS; i++) {
-      const bi = i - humanCount;
-      const sp = SPAWN_POINTS[i] || SPAWN_POINTS[4];
-      this.bots.push(new BotAI('bot_' + this.id + '_' + bi, sp.x + (Math.random() - 0.5) * 60, sp.y + (Math.random() - 0.5) * 60, BOT_COLORS[bi], BOT_NAMES[bi]));
+    for (let i = 0; i < botsNeeded; i++) {
+      const sp = SPAWN_POINTS[humanCount + i] || SPAWN_POINTS[4];
+      this.bots.push(new BotAI('bot_' + this.id + '_' + i,
+        sp.x + (Math.random() - 0.5) * 60, sp.y + (Math.random() - 0.5) * 60,
+        BOT_COLORS[i % BOT_COLORS.length], BOT_NAMES[i % BOT_NAMES.length]));
     }
+    this.lobbyBots = 0;
 
     this.gamePlayers = new Map();
     let si = 0;
@@ -500,9 +545,11 @@ class Room {
         this.state = 'lobby';
         this.bots = []; this.bullets = []; this.pickups = [];
         this.gamePlayers = null; this.killFeed = [];
+        this.lobbyBots = 0;
         this.broadcast({ type: 'return_to_lobby' });
+        this.restartAutoFill();
       }
-    }, 6000);
+    }, 5000);
   }
 
   broadcastState() {
@@ -555,7 +602,7 @@ class Room {
   getInfo() {
     return {
       id: this.id, name: this.name,
-      playerCount: this.humans.size,
+      playerCount: this.humans.size + this.lobbyBots,
       maxPlayers: MAX_PLAYERS,
       state: this.state,
       hostId: this.hostId
@@ -565,7 +612,11 @@ class Room {
   getLobbyData() {
     const players = [];
     for (const [id, h] of this.humans) players.push({ id, name: h.name, isHost: id === this.hostId });
-    return { id: this.id, name: this.name, players, hostId: this.hostId, state: this.state, maxPlayers: MAX_PLAYERS };
+    // 人机占位
+    for (let i = 0; i < this.lobbyBots; i++) {
+      players.push({ id: 'bot_ph_' + i, name: '人机 ' + (i + 1), isHost: false, isBot: true });
+    }
+    return { id: this.id, name: this.name, players, hostId: this.hostId, state: this.state, maxPlayers: MAX_PLAYERS, lobbyBots: this.lobbyBots };
   }
 }
 
@@ -717,7 +768,6 @@ class GameServer {
     const room = this.rooms.get(client.roomId);
     if (!room) return;
     if (client.id !== room.hostId) { this.sendTo(ws, { type: 'error', message: '只有房主可以开始游戏' }); return; }
-    if (room.humans.size < 1) { this.sendTo(ws, { type: 'error', message: '至少需要1名玩家' }); return; }
     room.startGame();
   }
 

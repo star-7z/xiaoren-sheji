@@ -250,13 +250,12 @@ class Room {
     this.startAutoFill();
   }
 
-  addHuman(ws, name) {
-    const id = generateId(8);
+  addHuman(clientId, ws, name) {
     const color = PLAYER_COLORS[this.humans.size % PLAYER_COLORS.length];
-    const player = { id, ws, name, color, ready: true };
-    this.humans.set(id, player);
-    this.playerInputs.set(id, { keys: {}, mouseX: 0, mouseY: 0, shooting: false, reloading: false });
-    this.lastInputTime.set(id, Date.now());
+    const player = { id: clientId, ws, name, color, ready: true };
+    this.humans.set(clientId, player);
+    this.playerInputs.set(clientId, { keys: {}, mouseX: 0, mouseY: 0, shooting: false, reloading: false });
+    this.lastInputTime.set(clientId, Date.now());
     // 真人加入时挤掉一个人机占位
     if (this.lobbyBots > 0 && (this.humans.size + this.lobbyBots) > MAX_PLAYERS) {
       this.lobbyBots--;
@@ -295,6 +294,12 @@ class Room {
       this.broadcastLobby();
       if (this.humans.size + this.lobbyBots >= MAX_PLAYERS) {
         clearInterval(this.autoFillTimer); this.autoFillTimer = null;
+        // 满员自动开局
+        setTimeout(() => {
+          if (this.state === 'lobby' && this.humans.size + this.lobbyBots >= MAX_PLAYERS) {
+            this.startGame();
+          }
+        }, 500);
       }
     }, 1000);
   }
@@ -696,10 +701,9 @@ class GameServer {
     if (!client) return;
     if (client.roomId) { this.sendTo(ws, { type: 'error', message: '已在房间中' }); return; }
 
-    const roomId = generateId(6);
     const room = new Room(roomId, roomName, client.id);
     room.onEmpty = (rid) => this.rooms.delete(rid);
-    const player = room.addHuman(ws, client.name);
+    const player = room.addHuman(client.id, ws, client.name);
     client.roomId = roomId;
     this.rooms.set(roomId, room);
     this.sendTo(ws, { type: 'room_joined', room: room.getLobbyData(), yourId: player.id });
@@ -715,7 +719,7 @@ class GameServer {
     if (room.state !== 'lobby') { this.sendTo(ws, { type: 'error', message: '游戏已开始' }); return; }
     if (room.humans.size >= MAX_PLAYERS) { this.sendTo(ws, { type: 'error', message: '房间已满' }); return; }
 
-    const player = room.addHuman(ws, client.name);
+    const player = room.addHuman(client.id, ws, client.name);
     client.roomId = roomId;
     this.sendTo(ws, { type: 'room_joined', room: room.getLobbyData(), yourId: player.id });
     room.broadcast({ type: 'room_update', room: room.getLobbyData() });

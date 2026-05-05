@@ -180,7 +180,6 @@ class NetClient {
   dispatch(msg) {
     const cbs = this.callbacks[msg.type];
     if (cbs) cbs.forEach(cb => cb(msg));
-    // 通用处理器
     const all = this.callbacks['*'];
     if (all) all.forEach(cb => cb(msg));
   }

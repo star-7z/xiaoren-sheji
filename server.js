@@ -294,12 +294,6 @@ class Room {
       this.broadcastLobby();
       if (this.humans.size + this.lobbyBots >= MAX_PLAYERS) {
         clearInterval(this.autoFillTimer); this.autoFillTimer = null;
-        // 满员自动开局
-        setTimeout(() => {
-          if (this.state === 'lobby' && this.humans.size + this.lobbyBots >= MAX_PLAYERS) {
-            this.startGame();
-          }
-        }, 500);
       }
     }, 1000);
   }
@@ -637,12 +631,27 @@ class GameServer {
     const clientId = generateId(8);
     this.clients.set(ws, { id: clientId, name: '玩家', roomId: null });
     this.sendTo(ws, { type: 'connected', clientId });
+    console.log('客户端连接:', clientId);
 
     ws.on('message', (raw) => {
+      const text = raw.toString().trim();
+      if (!text || text[0] !== '{') {
+        console.log('忽略非JSON:', text.substring(0, 80));
+        return;
+      }
+      let msg;
       try {
-        const msg = JSON.parse(raw.toString());
+        msg = JSON.parse(text);
+      } catch (e) {
+        console.log('JSON解析失败:', text.substring(0, 80));
+        return;
+      }
+      console.log('收到:', msg.type, 'from', this.clients.get(ws)?.name);
+      try {
         this.handleMessage(ws, msg);
-      } catch (e) { this.sendTo(ws, { type: 'error', message: '消息格式错误' }); }
+      } catch (e) {
+        console.error('处理消息出错:', msg.type, e.message);
+      }
     });
 
     ws.on('close', () => this.handleDisconnect(ws));
@@ -701,6 +710,7 @@ class GameServer {
     if (!client) return;
     if (client.roomId) { this.sendTo(ws, { type: 'error', message: '已在房间中' }); return; }
 
+    const roomId = generateId(6);
     const room = new Room(roomId, roomName, client.id);
     room.onEmpty = (rid) => this.rooms.delete(rid);
     const player = room.addHuman(client.id, ws, client.name);

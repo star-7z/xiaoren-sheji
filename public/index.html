@@ -44,6 +44,10 @@ button.primary:hover { background: #dd5533; }
 button.danger { background: #442222; border-color: #884444; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.mode-btn { padding: 6px 14px !important; font-size: 13px !important; width: auto !important; opacity: 0.5; }
+.mode-btn.active { opacity: 1; border-color: #ff6644 !important; }
+.team-box { min-height: 60px; }
+.team-box .tp { font-size: 12px; padding: 2px 0; }
 #room-list { width: 100%; max-height: 260px; overflow-y: auto; }
 .room-entry {
   width: 100%; padding: 10px 14px; background: #1a1a2e; border: 1px solid #3a3a5a;
@@ -101,6 +105,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
     <p style="font-size:12px;color:#666;">多人联机 · 5人对战 · AI补齐</p>
     <input id="name-inp" placeholder="输入昵称" maxlength="12" value="枪手">
     <button id="btn-quick" class="primary">⚡ 快速匹配</button>
+    <button id="btn-quick-5v5" style="background:#442288;border-color:#6644cc;">5v5对战</button>
     <button id="btn-create">🏠 创建房间</button>
     <button id="btn-join">📋 加入房间</button>
   </div>
@@ -125,6 +130,24 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   <div id="lobby-screen" class="screen">
     <h2 id="lobby-name"></h2>
     <p id="lobby-id" style="font-size:12px;color:#888;"></p>
+    <div id="lobby-mode" style="display:none;">
+      <button id="btn-mode-dm" class="mode-btn active">乱斗模式</button>
+      <button id="btn-mode-5v5" class="mode-btn">5v5对战</button>
+    </div>
+    <div id="lobby-teams" style="display:none;width:100%;gap:10px;">
+      <div style="display:flex;gap:10px;width:100%;">
+        <div id="team-blue" class="team-box" style="flex:1;border:2px solid #4488ff;border-radius:4px;padding:8px;">
+          <div style="color:#4488ff;font-weight:bold;margin-bottom:4px;">蓝方</div>
+          <div id="team-blue-list"></div>
+        </div>
+        <div id="team-red" class="team-box" style="flex:1;border:2px solid #ff4444;border-radius:4px;padding:8px;">
+          <div style="color:#ff4444;font-weight:bold;margin-bottom:4px;">红方</div>
+          <div id="team-red-list"></div>
+        </div>
+      </div>
+      <button id="btn-join-blue" style="font-size:12px;padding:6px;">加入蓝方</button>
+      <button id="btn-join-red" style="font-size:12px;padding:6px;">加入红方</button>
+    </div>
     <div id="lobby-players"></div>
     <button id="btn-start" class="primary" style="display:none;">开始游戏</button>
     <button id="btn-leave" class="danger">离开房间</button>
@@ -135,6 +158,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   <div class="hud-ammo" id="hud-ammo"></div>
   <div class="hud-hp" id="hud-hp"></div>
   <div class="hud-alive" id="hud-alive"></div>
+  <div class="hud-crystals" id="hud-crystals" style="position:absolute;left:50%;top:10px;transform:translateX(-50%);font-size:14px;display:none;"></div>
   <div class="hud-kills" id="hud-kills"></div>
   <div class="hud-help">WASD移动 | 鼠标瞄准 | 按住左键射击(自动锁定) | R换弹</div>
   <canvas class="hud-minimap" id="minimap" width="150" height="112"></canvas>
@@ -142,9 +166,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 <div id="countdown-overlay"></div>
 
+<div id="respawn-overlay" style="position:fixed;inset:0;z-index:28;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);">
+  <div style="text-align:center;color:#fff;font-size:24px;">复活倒计时<br><span id="respawn-timer" style="font-size:48px;color:#ff6644;">5</span></div>
+</div>
+
 <div id="game-over-overlay">
   <div class="result" id="go-result"></div>
   <p id="go-winner" style="font-size:18px;color:#ffaa66;"></p>
+  <div id="go-stats" style="max-height:200px;overflow-y:auto;font-size:13px;text-align:left;padding:0 20px;"></div>
   <button id="btn-return-lobby">返回大厅</button>
 </div>
 
@@ -321,6 +350,61 @@ class Renderer {
           }
         }
       }
+    }
+
+    // 绘制水晶 (5v5)
+    const crystals = state.crystals || [];
+    for (const c of crystals) {
+      if (!c.alive) continue;
+      const sx = c.x - cam.x, sy = c.y - cam.y;
+      // 回血圈
+      if (c.healX !== undefined) {
+        const hsx = c.healX - cam.x, hsy = c.healY - cam.y;
+        ctx.strokeStyle = c.team === 'blue' ? 'rgba(68,136,255,0.4)' : 'rgba(255,68,68,0.4)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath(); ctx.arc(hsx, hsy, c.healR || 90, 0, Math.PI*2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = c.team === 'blue' ? 'rgba(68,136,255,0.08)' : 'rgba(255,68,68,0.08)';
+        ctx.beginPath(); ctx.arc(hsx, hsy, c.healR || 90, 0, Math.PI*2); ctx.fill();
+      }
+      // 底座光环
+      const glow = c.team === 'blue' ? 'rgba(68,136,255,0.2)' : 'rgba(255,68,68,0.2)';
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(sx, sy, c.r + 8, 0, Math.PI*2); ctx.fill();
+      // 水晶主体
+      const cCol = c.team === 'blue' ? '#4488ff' : '#ff4444';
+      ctx.fillStyle = cCol;
+      ctx.beginPath(); ctx.arc(sx, sy, c.r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = c.team === 'blue' ? '#88bbff' : '#ff8888';
+      ctx.beginPath(); ctx.arc(sx - c.r*0.3, sy - c.r*0.3, c.r*0.4, 0, Math.PI*2); ctx.fill();
+      // HP条
+      const barW = c.r * 2, barH = 6;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(sx - barW/2, sy - c.r - 16, barW, barH);
+      const hpPct = c.hp / c.maxHp;
+      ctx.fillStyle = hpPct > 0.5 ? '#2ecc71' : hpPct > 0.25 ? '#f39c12' : '#e74c3c';
+      ctx.fillRect(sx - barW/2, sy - c.r - 16, barW * hpPct, barH);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(Math.floor(c.hp) + '/' + c.maxHp, sx, sy - c.r - 20);
+    }
+
+    // 绘制小兵 (5v5)
+    const minions = state.minions || [];
+    for (const m of minions) {
+      if (!m.alive) continue;
+      const sx = m.x - cam.x, sy = m.y - cam.y;
+      ctx.fillStyle = m.team === 'blue' ? '#6699ff' : '#ff6666';
+      ctx.fillRect(sx - 5, sy - 4, 10, 8);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(sx - 2, sy - 3, 4, 3);
+      // 小兵名字
+      ctx.fillStyle = m.team === 'blue' ? '#88aaff' : '#ff8888';
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('小兵 ' + m.hp + 'HP', sx, sy - 8);
     }
 
     // 绘制子弹
@@ -562,11 +646,30 @@ net.on('game_state', msg => {
 
 net.on('game_over', msg => {
   gameActive = false;
-  const youWin = msg.winnerId === yourId;
-  document.getElementById('go-result').textContent = youWin ? '🏆 胜利!' : '💀 你被消灭了';
-  document.getElementById('go-result').style.color = youWin ? '#2ecc71' : '#e74c3c';
-  document.getElementById('go-winner').textContent = '胜者: ' + msg.winner;
+  const is5v5 = !!msg.winnerTeam;
+  let youWin = false;
+  if (is5v5) {
+    const you = renderer.currentState?.players?.find(p => p.id === yourId);
+    youWin = you && you.team === msg.winnerTeam;
+    document.getElementById('go-result').textContent = youWin ? '🏆 胜利!' : '💀 败北';
+    document.getElementById('go-result').style.color = youWin ? '#2ecc71' : '#e74c3c';
+    document.getElementById('go-winner').textContent = '胜方: ' + msg.winner;
+    // 战绩表
+    const stats = msg.stats || [];
+    document.getElementById('go-stats').innerHTML = stats.length > 0 ?
+      '<table style="width:100%;border-collapse:collapse;">' +
+      '<tr><th>玩家</th><th>阵营</th><th>击杀</th><th>死亡</th></tr>' +
+      stats.map(s => `<tr><td>${s.name}</td><td>${s.team==='blue'?'蓝':'红'}</td><td>${s.kills}</td><td>${s.deaths}</td></tr>`).join('') +
+      '</table>' : '';
+  } else {
+    youWin = msg.winnerId === yourId;
+    document.getElementById('go-result').textContent = youWin ? '🏆 胜利!' : '💀 你被消灭了';
+    document.getElementById('go-result').style.color = youWin ? '#2ecc71' : '#e74c3c';
+    document.getElementById('go-winner').textContent = '胜者: ' + msg.winner;
+    document.getElementById('go-stats').innerHTML = '';
+  }
   $gameOver.classList.add('active');
+  document.getElementById('respawn-overlay').style.display = 'none';
   setStatus('游戏结束');
 });
 
@@ -609,6 +712,12 @@ document.getElementById('btn-quick').addEventListener('click', () => {
   net.quickMatch();
 });
 
+document.getElementById('btn-quick-5v5').addEventListener('click', () => {
+  myName = document.getElementById('name-inp').value.trim() || '枪手';
+  net.setName(myName);
+  net.send({ type: 'quick_match_5v5' });
+});
+
 document.getElementById('btn-create').addEventListener('click', () => {
   showScreen($create);
 });
@@ -648,59 +757,110 @@ document.getElementById('btn-leave').addEventListener('click', () => {
   showScreen($menu);
 });
 
+// 5v5 模式/阵营按钮
+document.getElementById('btn-mode-dm').addEventListener('click', () => { net.send({ type: 'set_mode', mode: 'deathmatch' }); });
+document.getElementById('btn-mode-5v5').addEventListener('click', () => { net.send({ type: 'set_mode', mode: 'team_battle' }); });
+document.getElementById('btn-join-blue').addEventListener('click', () => { net.send({ type: 'assign_team', team: 'blue' }); });
+document.getElementById('btn-join-red').addEventListener('click', () => { net.send({ type: 'assign_team', team: 'red' }); });
+
 document.getElementById('btn-return-lobby').addEventListener('click', () => {
   $gameOver.classList.remove('active');
-  // 等待服务器返回大厅
 });
 
 // ==================== 大厅UI更新 ====================
 function updateLobbyUI(room) {
   document.getElementById('lobby-name').textContent = room.name;
   const totalPlayers = room.players.length;
-  document.getElementById('lobby-id').textContent = '房间号: ' + room.id + ' | ' + totalPlayers + '/' + room.maxPlayers + '人';
-  const playersDiv = document.getElementById('lobby-players');
-  playersDiv.innerHTML = room.players.map(p => {
-    const badge = p.isHost ? '<span class="host-badge">[房主]</span>' : '';
-    const tag = p.isBot ? '<span style="color:#f39c12;font-size:11px;">[人机]</span>' : '';
-    return `<div class="lobby-player">
-      <span>${p.name} ${badge} ${tag}</span>
-    </div>`;
-  }).join('');
-  const btnStart = document.getElementById('btn-start');
+  const max = room.maxPlayers || 5;
+  document.getElementById('lobby-id').textContent = '房间号: ' + room.id + ' | ' + totalPlayers + '/' + max + '人';
+  const is5v5 = room.gameMode === 'team_battle';
+
+  // 模式切换 (仅房主可见)
+  const modeDiv = document.getElementById('lobby-mode');
+  const teamsDiv = document.getElementById('lobby-teams');
   if (isHost) {
-    btnStart.style.display = 'block';
-    btnStart.disabled = false;
+    modeDiv.style.display = 'block';
+    document.getElementById('btn-mode-dm').classList.toggle('active', !is5v5);
+    document.getElementById('btn-mode-5v5').classList.toggle('active', is5v5);
   } else {
-    btnStart.style.display = 'none';
+    modeDiv.style.display = 'none';
   }
+
+  // 5v5 阵营选择
+  if (is5v5) {
+    teamsDiv.style.display = 'block';
+    document.getElementById('lobby-players').style.display = 'none';
+    if (room.teams) {
+      document.getElementById('team-blue-list').innerHTML = room.teams.blue.players.map(p =>
+        `<div class="tp"><span style="color:#4488ff;">${p.name}${p.isHost?' [房主]':''}</span></div>`
+      ).join('') + (room.teams.blue.bots > 0 ? `<div class="tp" style="color:#888;">+${room.teams.blue.bots} 人机</div>` : '');
+      document.getElementById('team-red-list').innerHTML = room.teams.red.players.map(p =>
+        `<div class="tp"><span style="color:#ff4444;">${p.name}${p.isHost?' [房主]':''}</span></div>`
+      ).join('') + (room.teams.red.bots > 0 ? `<div class="tp" style="color:#888;">+${room.teams.red.bots} 人机</div>` : '');
+    }
+  } else {
+    teamsDiv.style.display = 'none';
+    document.getElementById('lobby-players').style.display = 'block';
+    const playersDiv = document.getElementById('lobby-players');
+    playersDiv.innerHTML = room.players.map(p => {
+      const badge = p.isHost ? '<span class="host-badge">[房主]</span>' : '';
+      const tag = p.isBot ? '<span style="color:#f39c12;font-size:11px;">[人机]</span>' : '';
+      return `<div class="lobby-player"><span>${p.name} ${badge} ${tag}</span></div>`;
+    }).join('');
+  }
+
+  const btnStart = document.getElementById('btn-start');
+  btnStart.style.display = isHost ? 'block' : 'none';
+  btnStart.disabled = false;
 }
 
 // ==================== HUD更新 ====================
 function updateHUD(state) {
   const you = state.players.find(p => p.id === yourId);
-  if (!you) return;
+  const is5v5 = state.gameMode === 'team_battle';
 
-  const magColor = you.mag === 0 ? '#e74c3c' : you.reloading ? '#f39c12' : '#fff';
-  document.getElementById('hud-ammo').innerHTML = `
-    <span style="color:${magColor}">弹夹: ${you.mag} / 5</span><br>
-    <span style="color:#ccc">备弹: ${you.reserve} / 10</span>
-    ${you.reloading ? '<br><span style="color:#f39c12">换弹中...</span>' : ''}
-    ${you.mag === 0 && you.reserve === 0 ? '<br><span style="color:#e74c3c">弹药耗尽!</span>' : ''}
-  `;
+  if (you) {
+    if (is5v5) {
+      // 5v5模式: 无限弹药显示 + 动态血量
+      const magCol = you.mag === 0 ? '#e74c3c' : you.reloading ? '#f39c12' : '#0f0';
+      document.getElementById('hud-ammo').innerHTML = `<span style="color:${magCol}">弹夹: ${you.mag||0} / 5</span><br><span style="color:#ccc;">备弹: ∞ | 伤害: ${1 + (you.bonusDmg || 0)}</span>${you.reloading ? '<br><span style="color:#f39c12">换弹中...</span>' : ''}`;
+      const hpBar = '█'.repeat(Math.min(you.hp, 20)) + '░'.repeat(Math.max(0, Math.min(20, (you.maxHp||5) - you.hp)));
+      document.getElementById('hud-hp').innerHTML = `<span>HP</span><br><span style="color:#2ecc71;font-size:18px;">${hpBar}</span><span style="color:#2ecc71"> ${you.hp}/${you.maxHp||5}</span>`;
+    } else {
+      const magColor = you.mag === 0 ? '#e74c3c' : you.reloading ? '#f39c12' : '#fff';
+      document.getElementById('hud-ammo').innerHTML = `<span style="color:${magColor}">弹夹: ${you.mag} / 5</span><br><span style="color:#ccc">备弹: ${you.reserve} / 10</span>${you.reloading ? '<br><span style="color:#f39c12">换弹中...</span>' : ''}${you.mag === 0 && you.reserve === 0 ? '<br><span style="color:#e74c3c">弹药耗尽!</span>' : ''}`;
+      const hpPct = you.hp / 5;
+      const hpColor = hpPct > 0.6 ? '#2ecc71' : hpPct > 0.3 ? '#f39c12' : '#e74c3c';
+      document.getElementById('hud-hp').innerHTML = `<span>HP</span><br><span style="color:${hpColor};font-size:24px;">${'█'.repeat(you.hp)}${'░'.repeat(5 - you.hp)}</span><span style="color:${hpColor}"> ${you.hp}/5</span>`;
+    }
 
-  const hpPct = you.hp / 5;
-  const hpColor = hpPct > 0.6 ? '#2ecc71' : hpPct > 0.3 ? '#f39c12' : '#e74c3c';
-  document.getElementById('hud-hp').innerHTML = `
-    <span>HP</span><br>
-    <span style="color:${hpColor};font-size:24px;">${'█'.repeat(you.hp)}${'░'.repeat(5 - you.hp)}</span>
-    <span style="color:${hpColor}"> ${you.hp}/5</span>
-  `;
+    // 复活覆盖层
+    const respawnOverlay = document.getElementById('respawn-overlay');
+    if (!you.alive && is5v5) {
+      respawnOverlay.style.display = 'flex';
+      const rt = (state.respawnTimers || []).find(r => r.id === yourId);
+      document.getElementById('respawn-timer').textContent = rt ? rt.remaining : '...';
+    } else {
+      respawnOverlay.style.display = 'none';
+    }
+  }
 
-  document.getElementById('hud-alive').textContent = '存活: ' + state.aliveCount + ' / ' + (state.players.length);
+  // 水晶血量条
+  const crystalsEl = document.getElementById('hud-crystals');
+  if (is5v5 && state.crystals) {
+    crystalsEl.style.display = 'block';
+    crystalsEl.innerHTML = state.crystals.map(c =>
+      `<span style="color:${c.team==='blue'?'#4488ff':'#ff4444'};">${c.team==='blue'?'蓝':'红'}方水晶 ${Math.floor(c.hp)}/${c.maxHp}</span>`
+    ).join(' &nbsp;|&nbsp; ');
+  } else {
+    crystalsEl.style.display = 'none';
+  }
+
+  document.getElementById('hud-alive').textContent = is5v5 ? '' : ('存活: ' + (state.aliveCount || 0) + ' / ' + (state.players ? state.players.length : 0));
 
   const feed = state.killFeed || [];
   document.getElementById('hud-kills').innerHTML = feed.map(kf =>
-    `<span style="color:rgba(255,255,255,${Math.min(1, kf.time)})">${kf.killer} 击杀 ${kf.victim}</span>`
+    `<span style="color:rgba(255,255,255,${Math.min(1, kf.time||1)})">${kf.killer} 击杀 ${kf.victim}</span>`
   ).join('<br>');
 }
 
